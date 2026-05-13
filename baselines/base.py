@@ -94,6 +94,9 @@ def fedavg_aggregate(
             if param_name in updates:
                 param = updates[param_name]
                 if isinstance(param, torch.Tensor):
+                    # 跳过整数类型参数（BatchNorm的num_batches_tracked等）
+                    if param.dtype in [torch.int64, torch.int32, torch.long]:
+                        continue
                     if aggregated[param_name].dtype != param.dtype:
                         param = param.float()
                     aggregated[param_name] += weight * param
