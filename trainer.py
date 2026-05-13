@@ -125,11 +125,12 @@ class FedClient:
                 loss.backward()
                 optimizer.step()
 
-        # 计算参数更新(delta): 原始参数 - 训练后参数
+        # 计算参数更新(delta): 新参数 - 旧参数
+        # 这样服务器直接 add_ 即可: w_global_new = w_global + delta
         param_update = {}
         new_state = self.model.state_dict()
         for name in old_state:
-            param_update[name] = old_state[name] - new_state[name]
+            param_update[name] = new_state[name] - old_state[name]
 
         return param_update, self.sample_count
 
@@ -230,16 +231,20 @@ class FedServer:
             print(f"[Server] Aggregation info: {info}")
         return aggregated
 
-    def apply_gradients(self, param_updates: Dict[str, torch.Tensor]):
-        """将聚合后的参数更新应用到全局模型 (全局参数 += 聚合后的更新)"""
+    def apply_gradients(self, param_updates: Dict[str, torch.Tensor], lr: float = 1.0):
+        """将聚合后的参数更新应用到全局模型
+        w_global = w_global + lr * aggregated_delta
+        其中 delta = new_param - old_param（参数向梯度反方向移动）
+        """
         with torch.no_grad():
             for name, param in self.global_model.named_parameters():
                 if name in param_updates:
+                    delta = param_updates[name]
                     # 处理类型不匹配
-                    if param_updates[name].dtype != param.dtype:
-                        param.add_(param_updates[name].to(param.dtype))
-                    else:
-                        param.add_(param_updates[name])
+                    if delta.dtype != param.dtype:
+                        delta = delta.to(param.dtype)
+                    # 缩放更新量：lr < 1 表示部分更新，避免参数震荡
+                    param.add_(delta, alpha=lr)
 
     def evaluate(self) -> Tuple[float, float]:
         """评估全局模型"""
@@ -319,8 +324,9 @@ class FedServer:
         # 聚合
         aggregated = self.aggregate_updates(client_updates, sample_counts)
 
-        # 应用梯度
-        self.apply_gradients(aggregated)
+        # 应用梯度（使用局部学习率缩放）
+        lr = self.local_config.get('lr', 0.01)
+        self.apply_gradients(aggregated, lr)
 
         # 评估
         test_acc, test_loss = self.evaluate()
