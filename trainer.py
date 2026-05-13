@@ -90,9 +90,12 @@ class FedClient:
             attack_labels: 是否在训练时攻击标签
 
         Returns:
-            (gradient_dict, sample_count)
+            (param_update, sample_count) - 参数更新(delta) = 原始参数 - 训练后参数
         """
         self.model.train()
+
+        # 保存训练前的参数
+        old_state = {k: v.clone() for k, v in self.model.state_dict().items()}
 
         # 创建DataLoader
         loader = DataLoader(self.dataset, batch_size=batch_size, shuffle=True)
@@ -122,13 +125,13 @@ class FedClient:
                 loss.backward()
                 optimizer.step()
 
-        # 计算梯度
-        gradients = {}
-        for name, param in self.model.named_parameters():
-            if param.requires_grad:
-                gradients[name] = param.grad.clone()
+        # 计算参数更新(delta): 原始参数 - 训练后参数
+        param_update = {}
+        new_state = self.model.state_dict()
+        for name in old_state:
+            param_update[name] = old_state[name] - new_state[name]
 
-        return gradients, self.sample_count
+        return param_update, self.sample_count
 
     def get_model_state(self) -> Dict[str, torch.Tensor]:
         """获取模型参数"""
@@ -227,16 +230,16 @@ class FedServer:
             print(f"[Server] Aggregation info: {info}")
         return aggregated
 
-    def apply_gradients(self, gradients: Dict[str, torch.Tensor]):
-        """将聚合后的梯度应用到全局模型"""
+    def apply_gradients(self, param_updates: Dict[str, torch.Tensor]):
+        """将聚合后的参数更新应用到全局模型 (全局参数 += 聚合后的更新)"""
         with torch.no_grad():
             for name, param in self.global_model.named_parameters():
-                if name in gradients and param.requires_grad:
+                if name in param_updates:
                     # 处理类型不匹配
-                    if gradients[name].dtype != param.dtype:
-                        param.copy_(gradients[name].to(param.dtype))
+                    if param_updates[name].dtype != param.dtype:
+                        param.add_(param_updates[name].to(param.dtype))
                     else:
-                        param.copy_(gradients[name])
+                        param.add_(param_updates[name])
 
     def evaluate(self) -> Tuple[float, float]:
         """评估全局模型"""
@@ -291,14 +294,14 @@ class FedServer:
             client.set_model_state(copy.deepcopy(global_state))
 
         # 本地训练
-        client_gradients = {}
+        client_updates = {}
         sample_counts = {}
 
         for client in clients:
             if client.client_id in selected_ids:
                 attack_this_round = client.client_id in malicious
 
-                grads, count = client.train(
+                updates, count = client.train(
                     local_epochs=self.local_config.get('epochs', 2),
                     batch_size=self.local_config.get('batch_size', 32),
                     lr=self.local_config.get('lr', 0.01),
@@ -308,13 +311,13 @@ class FedServer:
 
                 # 恶意客户端攻击梯度
                 if attack_this_round and hasattr(client.attack, 'apply_to_gradients'):
-                    grads = client.attack.apply_to_gradients(grads)
+                    updates = client.attack.apply_to_gradients(updates)
 
-                client_gradients[client.client_id] = grads
+                client_updates[client.client_id] = updates
                 sample_counts[client.client_id] = count
 
         # 聚合
-        aggregated = self.aggregate_updates(client_gradients, sample_counts)
+        aggregated = self.aggregate_updates(client_updates, sample_counts)
 
         # 应用梯度
         self.apply_gradients(aggregated)
