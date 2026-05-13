@@ -4,6 +4,7 @@
 """
 from .base import (
     BaseAttack,
+    NoAttack,
     LabelFlippingAttack,
     SignFlippingAttack,
     GaussianNoiseAttack
@@ -31,7 +32,7 @@ def get_attack(
 
     if name.lower() == 'none' or malicious_ratio == 0:
         # 返回一个不做任何事的攻击
-        return BaseAttack(malicious_ratio=0)
+        return NoAttack(malicious_ratio=0)
     elif name.lower() == 'label_flipping':
         return LabelFlippingAttack(
             malicious_ratio=malicious_ratio,
@@ -51,11 +52,12 @@ def get_attack(
     else:
         # 默认返回无攻击
         print(f"[Warning] Unknown attack '{name}', using no attack")
-        return BaseAttack(malicious_ratio=0)
+        return NoAttack(malicious_ratio=0)
 
 
 __all__ = [
     'BaseAttack',
+    'NoAttack',
     'LabelFlippingAttack',
     'SignFlippingAttack',
     'GaussianNoiseAttack',

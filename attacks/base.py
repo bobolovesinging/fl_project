@@ -46,6 +46,22 @@ class BaseAttack(ABC):
         return client_id in malicious_clients
 
 
+class NoAttack(BaseAttack):
+    """无攻击 - 不修改任何数据"""
+
+    def __init__(self, malicious_ratio: float = 0.0, **kwargs):
+        super().__init__(malicious_ratio, **kwargs)
+
+    def select_malicious_clients(
+        self,
+        total_clients: int,
+        available_clients: List[int],
+        round_idx: int
+    ) -> List[int]:
+        """无恶意客户端"""
+        return []
+
+
 class LabelFlippingAttack(BaseAttack):
     """
     标签翻转攻击
